@@ -1,19 +1,48 @@
+'use client';
+
 import { lusitana } from '@/app/ui/fonts';
 import {
   AtSymbolIcon,
   KeyIcon,
   ExclamationCircleIcon,
+  InformationCircleIcon,
 } from '@heroicons/react/24/outline';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
-import { Button } from './button';
+import { Button } from '@/app/ui/button';
+import { useActionState } from 'react';
+import { authenticate } from '@/app/lib/actions';
+import { useSearchParams } from 'next/navigation';
 
 export default function LoginForm() {
+  const searchParams = useSearchParams();
+  const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+  const reason = searchParams.get('reason');
+  const notice =
+    reason === 'idle'
+      ? "You were signed out after a period of inactivity. Sign in again to pick up where you left off."
+      : reason === 'expired'
+        ? 'Your session expired. Please sign in again.'
+        : null;
+  const [errorMessage, formAction, isPending] = useActionState(
+    authenticate,
+    undefined,
+  );
+
   return (
-    <form className="space-y-3">
+    <form action={formAction} className="space-y-3">
       <div className="flex-1 rounded-lg bg-gray-50 px-6 pb-4 pt-8">
         <h1 className={`${lusitana.className} mb-3 text-2xl`}>
           Please log in to continue.
         </h1>
+        {notice ? (
+          <p
+            role="status"
+            className="mb-2 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+          >
+            <InformationCircleIcon className="mt-0.5 h-4 w-4 shrink-0" />
+            {notice}
+          </p>
+        ) : null}
         <div className="w-full">
           <div>
             <label
@@ -55,11 +84,30 @@ export default function LoginForm() {
             </div>
           </div>
         </div>
-        <Button className="mt-4 w-full">
+        <input type="hidden" name="redirectTo" value={callbackUrl} />
+        <Button className="mt-4 w-full" aria-disabled={isPending}>
           Log in <ArrowRightIcon className="ml-auto h-5 w-5 text-gray-50" />
         </Button>
-        <div className="flex h-8 items-end space-x-1">
-          {/* Add form errors here */}
+        <div
+          className="flex h-8 items-end space-x-1"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {errorMessage && (
+            <>
+              <ExclamationCircleIcon className="h-5 w-5 text-red-500" />
+              <p className="text-sm text-red-500">{errorMessage}</p>
+            </>
+          )}
+        </div>
+        <div className="mt-2 rounded-md bg-white px-3 py-2 text-xs text-gray-600">
+          <p className="font-medium text-gray-900">Demo accounts (password: 123456)</p>
+          <p className="mt-1">
+            <span className="font-medium">Admin:</span> user@nextmail.com · can create, edit and delete
+          </p>
+          <p>
+            <span className="font-medium">Viewer:</span> viewer@nextmail.com · read-only
+          </p>
         </div>
       </div>
     </form>

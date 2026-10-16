@@ -1,4 +1,4 @@
-import postgres from 'postgres';
+import { sql } from './db';
 import {
   CustomerField,
   CustomersTableType,
@@ -8,8 +8,6 @@ import {
   Revenue,
 } from './definitions';
 import { formatCurrency } from './utils';
-
-const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
 
 export async function fetchRevenue() {
   try {
@@ -68,16 +66,12 @@ export async function fetchCardData() {
       invoiceStatusPromise,
     ]);
 
-    const numberOfInvoices = Number(data[0][0].count ?? '0');
-    const numberOfCustomers = Number(data[1][0].count ?? '0');
-    const totalPaidInvoices = formatCurrency(data[2][0].paid ?? '0');
-    const totalPendingInvoices = formatCurrency(data[2][0].pending ?? '0');
-
+    // Raw numbers (cents for money), so the cards can animate them and format on the client.
     return {
-      numberOfCustomers,
-      numberOfInvoices,
-      totalPaidInvoices,
-      totalPendingInvoices,
+      numberOfInvoices: Number(data[0][0].count ?? 0),
+      numberOfCustomers: Number(data[1][0].count ?? 0),
+      totalPaidCents: Number(data[2][0].paid ?? 0),
+      totalPendingCents: Number(data[2][0].pending ?? 0),
     };
   } catch (error) {
     console.error('Database Error:', error);
@@ -85,10 +79,35 @@ export async function fetchCardData() {
   }
 }
 
-const ITEMS_PER_PAGE = 6;
+export const ITEMS_PER_PAGE = 6;
+
+export type InvoiceStatusFilter = 'all' | 'paid' | 'pending';
+
+export function parseStatusFilter(value: string | undefined): InvoiceStatusFilter {
+  return value === 'paid' || value === 'pending' ? value : 'all';
+}
+
+// Builds the WHERE clause once, so the page of rows and the total count can never disagree.
+function invoiceFilters(query: string, status: InvoiceStatusFilter) {
+  const term = `%${query}%`;
+  const statusClause = status === 'all' ? sql`` : sql`AND invoices.status = ${status}`;
+
+  return sql`
+    WHERE (
+      customers.name ILIKE ${term} OR
+      customers.email ILIKE ${term} OR
+      invoices.amount::text ILIKE ${term} OR
+      invoices.date::text ILIKE ${term} OR
+      invoices.status ILIKE ${term}
+    )
+    ${statusClause}
+  `;
+}
+
 export async function fetchFilteredInvoices(
   query: string,
   currentPage: number,
+  status: InvoiceStatusFilter = 'all',
 ) {
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
@@ -104,13 +123,8 @@ export async function fetchFilteredInvoices(
         customers.image_url
       FROM invoices
       JOIN customers ON invoices.customer_id = customers.id
-      WHERE
-        customers.name ILIKE ${`%${query}%`} OR
-        customers.email ILIKE ${`%${query}%`} OR
-        invoices.amount::text ILIKE ${`%${query}%`} OR
-        invoices.date::text ILIKE ${`%${query}%`} OR
-        invoices.status ILIKE ${`%${query}%`}
-      ORDER BY invoices.date DESC
+      ${invoiceFilters(query, status)}
+      ORDER BY invoices.date DESC, invoices.id
       LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset}
     `;
 
@@ -121,21 +135,21 @@ export async function fetchFilteredInvoices(
   }
 }
 
-export async function fetchInvoicesPages(query: string) {
+export async function fetchInvoicesSummary(query: string, status: InvoiceStatusFilter = 'all') {
   try {
-    const data = await sql`SELECT COUNT(*)
-    FROM invoices
-    JOIN customers ON invoices.customer_id = customers.id
-    WHERE
-      customers.name ILIKE ${`%${query}%`} OR
-      customers.email ILIKE ${`%${query}%`} OR
-      invoices.amount::text ILIKE ${`%${query}%`} OR
-      invoices.date::text ILIKE ${`%${query}%`} OR
-      invoices.status ILIKE ${`%${query}%`}
-  `;
+    const data = await sql`
+      SELECT COUNT(*)::int AS count
+      FROM invoices
+      JOIN customers ON invoices.customer_id = customers.id
+      ${invoiceFilters(query, status)}
+    `;
 
-    const totalPages = Math.ceil(Number(data[0].count) / ITEMS_PER_PAGE);
-    return totalPages;
+    const totalCount = Number(data[0].count);
+    return {
+      totalCount,
+      totalPages: Math.ceil(totalCount / ITEMS_PER_PAGE),
+      pageSize: ITEMS_PER_PAGE,
+    };
   } catch (error) {
     console.error('Database Error:', error);
     throw new Error('Failed to fetch total number of invoices.');
